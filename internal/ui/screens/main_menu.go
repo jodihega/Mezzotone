@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 
+	"codeberg.org/JoaoGarcia/Mezzotone/internal/navigation"
 	"codeberg.org/JoaoGarcia/Mezzotone/internal/ui"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
@@ -54,10 +55,10 @@ type MainMenuScreen struct {
 
 func NewMainMenuScreen() MainMenuScreen {
 	items := []list.Item{
-		item("Option 1"),
-		item("Option 2"),
-		item("Option 3"),
-		item("Quit"),
+		item("Convert Image"),
+		item("Convert GIF"),
+		item("Convert Video"),
+		item("Exit"),
 	}
 
 	const defaultWidth = 20
@@ -95,8 +96,13 @@ func (m MainMenuScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 			i, ok := m.list.SelectedItem().(item)
 			if ok {
 				m.choice = string(i)
+				switch m.choice {
+				case "Convert Image":
+					return m, navigation.Navigate(navigation.RouteConvertImageMenu)
+				case "Exit":
+					return m, tea.Quit
+				}
 			}
-			return m, tea.Quit
 		}
 	}
 
@@ -106,5 +112,7 @@ func (m MainMenuScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 }
 
 func (m MainMenuScreen) View() string {
-	return "Mezzotone\n\n" + m.list.View()
+	return "Mezzotone\n\n" +
+		"ASCII Converter\n\n" +
+		m.list.View()
 }
