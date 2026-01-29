@@ -1,2 +1,4 @@
 .idea
 logs.log
+debug_*
+debugFolder

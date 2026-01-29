@@ -1,6 +1,8 @@
 package screens
 
 import (
+	"errors"
+
 	"codeberg.org/JoaoGarcia/Mezzotone/internal/services"
 	"codeberg.org/JoaoGarcia/Mezzotone/internal/ui/components"
 	tea "github.com/charmbracelet/bubbletea"
@@ -8,10 +10,12 @@ import (
 
 type ImagePreview struct {
 	loadingAnimation components.LoadingScreen
+	loading          bool
+	err              error
 }
 
 func NewImagePreview() ImagePreview {
-	//experiment with animation - change later
+	//TODO experiment with animation - change later
 	loadingAnimation := components.NewLoadingScreen(
 		[]string{
 			"      \n      \n      \n      \n      \n      ",
@@ -33,34 +37,74 @@ func NewImagePreview() ImagePreview {
 			"      \n      \n      \n      \n      \n     o",
 			"      \n      \n      \n      \n      \n      ",
 		},
-		10,
+		20,
 	)
 
 	return ImagePreview{
-		loadingAnimation,
+		loadingAnimation: loadingAnimation,
+		loading:          true,
 	}
 }
 
 func (m ImagePreview) Init() tea.Cmd {
-	selectedFile, _ := services.Shared().Get("selectedFile")
-	if selectedFile == nil {
-		err := services.Logger().Error("selected file is nil")
-		if err != nil {
-			panic(err)
-		}
-	}
-
-	services.ConvertImageToString(selectedFile.(string))
-
-	return m.loadingAnimation.Spinner.Tick
+	return tea.Batch(
+		m.loadingAnimation.Spinner.Tick,
+		convertImageCmd(),
+	)
 }
 
 func (m ImagePreview) Update(msg tea.Msg) (Screen, tea.Cmd) {
-	var cmd tea.Cmd
-	m.loadingAnimation.Spinner, cmd = m.loadingAnimation.Spinner.Update(msg)
-	return m, cmd
+	switch msg := msg.(type) {
+
+	case services.ConvertDoneMsg:
+		m.loading = false
+		m.err = msg.Err
+		if msg.Err != nil {
+			_ = services.Logger().Error(msg.Err.Error())
+			return m, nil
+		}
+
+		//TODO: transition to the next screen (ASCII preview) if you have routing.
+		return m, nil
+
+	default:
+		if m.loading {
+			var cmd tea.Cmd
+			m.loadingAnimation.Spinner, cmd = m.loadingAnimation.Spinner.Update(msg)
+			return m, cmd
+		}
+		return m, nil
+	}
 }
 
 func (m ImagePreview) View() string {
-	return m.loadingAnimation.Spinner.View()
+	if m.err != nil {
+		return "Conversion failed:\n" + m.err.Error() + "\n"
+	}
+	if m.loading {
+		return m.loadingAnimation.Spinner.View()
+	}
+	return "Done!\n"
+}
+
+func convertImageCmd() tea.Cmd {
+	return func() tea.Msg {
+		selectedFileAny, ok := services.Shared().Get("selectedFile")
+		if !ok || selectedFileAny == nil {
+			return services.ConvertDoneMsg{Err: errors.New("selectedFile not set")}
+		}
+
+		selectedFile, ok := selectedFileAny.(string)
+		if !ok || selectedFile == "" {
+			return services.ConvertDoneMsg{Err: errors.New("selectedFile is not a string")}
+		}
+
+		//TODO: get this from user input
+		services.Shared().Set("textSize", 8)
+
+		err := services.ConvertImageToString(selectedFile)
+		return services.ConvertDoneMsg{
+			Err: err,
+		}
+	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"os"
 
 	"codeberg.org/JoaoGarcia/Mezzotone/internal/app"
@@ -9,9 +10,14 @@ import (
 )
 
 func main() {
-	err := services.InitLogger("logs.log")
-	if err != nil {
-		return
+	debug := flag.Bool("debug", false, "enable debug logging")
+	flag.Parse()
+	services.Shared().Set("debug", *debug)
+	if *debug {
+		err := services.InitLogger("logs.log")
+		if err != nil {
+			return
+		}
 	}
 
 	p := tea.NewProgram(app.NewRouterModel(), tea.WithAltScreen())
