@@ -36,6 +36,15 @@ type ConvertedImageArray struct {
 	Characters []rune
 }
 
+/*
+TODO if unicode is true i could make a bunch of different ramps for the user to choose from.
+	Example:
+	█▇▆▅▄▃▂▁ ▁▂▃▄▅▆▇█
+	█▓▒░ ░▒▓█
+	⣿⣷⣧⣇⣆⣄⣀ ⣀⣄⣆⣇⣧⣷⣿
+	●∙•·  ·•∙●
+*/
+
 func ConvertImageToString(filePath string) (ConvertedImageArray, error) {
 	isDebugEnvAny, _ := Shared().Get("debug")
 	isDebugEnv := isDebugEnvAny.(bool)
