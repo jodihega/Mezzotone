@@ -2,6 +2,7 @@ package screens
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -45,7 +46,7 @@ func (m ConvertImageMenuScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 
 	if didSelect, path := m.fileInput.FilePicker.DidSelectFile(msg); didSelect {
 		m.fileInput.SelectedFile = path
-		_ = services.Logger().Info("Selected File: " + m.fileInput.SelectedFile)
+		_ = services.Logger().Info(fmt.Sprintf("Selected File: %s", m.fileInput.SelectedFile))
 
 		services.Shared().Set("selectedFile", m.fileInput.SelectedFile)
 		return m, navigation.Navigate(navigation.RouteImagePreview)

@@ -97,7 +97,7 @@ func (m MainMenuScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 			i, ok := m.list.SelectedItem().(item)
 			if ok {
 				m.choice = string(i)
-				_ = services.Logger().Info("Main menu chosen option: " + m.choice)
+				_ = services.Logger().Info(fmt.Sprintf("Main menu chosen option: %s", m.choice))
 				switch m.choice {
 				case "Convert Image":
 					return m, navigation.Navigate(navigation.RouteConvertImageMenu)

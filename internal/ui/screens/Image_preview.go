@@ -2,6 +2,7 @@ package screens
 
 import (
 	"errors"
+	"strings"
 
 	"codeberg.org/JoaoGarcia/Mezzotone/internal/services"
 	"codeberg.org/JoaoGarcia/Mezzotone/internal/ui/components"
@@ -102,10 +103,26 @@ func convertImageCmd() tea.Cmd {
 		//TODO: get this from user input
 		services.Shared().Set("textSize", 8)
 		services.Shared().Set("fontAspect", 2)
-		services.Shared().Set("useUnicode", false)
+		services.Shared().Set("useUnicode", true)
 		services.Shared().Set("directionalRender", false)
+		services.Shared().Set("reverseChars", false) //TODO
 
-		err := services.ConvertImageToString(selectedFile)
+		convertedImage, err := services.ConvertImageToString(selectedFile)
+		if err != nil {
+			return services.ConvertDoneMsg{Err: err}
+		}
+
+		var outputBuilder strings.Builder
+		for i, r := range convertedImage.Characters {
+			outputBuilder.WriteRune(r)
+			if convertedImage.Cols > 0 && (i+1)%convertedImage.Cols == 0 {
+				outputBuilder.WriteByte('\n')
+			}
+		}
+		_ = services.Logger().Info(outputBuilder.String())
+
+		//TODO return this and updated View
+
 		return services.ConvertDoneMsg{
 			Err: err,
 		}

@@ -2,7 +2,9 @@ package services
 
 import (
 	"errors"
+	"fmt"
 	"image"
+	"image/color"
 	"image/draw"
 	_ "image/gif"
 	_ "image/jpeg"
@@ -10,43 +12,51 @@ import (
 	_ "image/png"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 
 	_ "golang.org/x/image/bmp"
 	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/webp"
-
-	xdraw "golang.org/x/image/draw"
 )
 
-//const asciiRamp := "$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\|()1{}[]?-_+~<>i!lI;:,"^`. "
-//const unicodeRamp := "█▉▊▋▌▍▎▏▓▒░■□@&%$#*+=-~:;!,\".^`' "
+const asciiRampDarkToBrightStr = "$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\|()1{}[]?-_+~<>i!lI;:,^`. "
+const unicodeRampDarkToBrightStr = "█▉▊▋▌▍▎▏▓▒░■□@&%$#*+=-~:;!,\".^`' "
+
+const asciiRampBrightToDarkStr = " .`^,:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$"
+const unicodeRampBrightToDarkStr = " '`^.\",!;:~-=+*#$%&@□■░▒▓▏▎▍▌▋▊▉█"
 
 type ConvertDoneMsg struct {
 	Err error
 }
 
-func ConvertImageToString(filePath string) error {
+type ConvertedImageArray struct {
+	Cols       int
+	Rows       int
+	Characters []rune
+}
+
+func ConvertImageToString(filePath string) (ConvertedImageArray, error) {
 	isDebugEnvAny, _ := Shared().Get("debug")
 	isDebugEnv := isDebugEnvAny.(bool)
 
 	f, err := os.Open(filePath)
 	if err != nil {
-		return err
+		return ConvertedImageArray{}, err
 	}
 	defer func() { _ = f.Close() }()
 
-	_ = Logger().Info("Successfully Loaded: " + filePath)
+	_ = Logger().Info(fmt.Sprintf("Successfully Loaded: %s", filePath))
 
 	inputImg, format, err := image.Decode(f)
 	if err != nil {
-		return err
+		return ConvertedImageArray{}, err
 	}
-	_ = Logger().Info("format: " + format)
+	_ = Logger().Info(fmt.Sprintf("format: %s", format))
 
 	textSizeAny, ok := Shared().Get("textSize")
 	if !ok || textSizeAny == nil {
-		return errors.New("textSize is nil")
+		return ConvertedImageArray{}, errors.New("textSize is nil")
 	}
 	textSize, ok := textSizeAny.(int)
 	if !ok || textSize <= 0 {
@@ -55,51 +65,49 @@ func ConvertImageToString(filePath string) error {
 
 	fontAspectAny, ok := Shared().Get("fontAspect")
 	if !ok || fontAspectAny == nil {
-		return errors.New("fontAspect is nil")
+		return ConvertedImageArray{}, errors.New("fontAspect is nil")
 	}
 	fontAspect, ok := fontAspectAny.(float64)
 	if !ok || fontAspect <= 0 {
 		fontAspect = 2
 	}
 
-	grayImg := convertRgbaToGray(inputImg)
-	if isDebugEnv {
-		err := saveImageToDebugDir(grayImg, "grayscale_img", "")
-		if err != nil {
-			return err
-		}
-	}
+	cols, rows := gridFromTextSize(inputImg, textSize, fontAspect)
 
-	cols, rows := gridFromTextSize(grayImg, textSize, fontAspect)
-	gridImage := downScaleToGrid(grayImg, cols, rows)
-	if isDebugEnv {
-		_ = saveImageToDebugDir(gridImage, "grid_gray", "")
-	}
+	//TODO if directionalRender is true apply Sobel per tile or pool full-res edges into the ASCII grid
 
-	//TODO if directionalRender is true Sobel filter on `small` (size cols×rows)
-
-	splitImages, err := splitImage(textSize, fontAspect, gridImage, isDebugEnv)
+	splitImages, err := splitImage(textSize, fontAspect, inputImg, isDebugEnv)
 	if err != nil {
-		return err
+		return ConvertedImageArray{}, err
 	}
+	_ = Logger().Info(fmt.Sprintf("Successfully Split Image: %s", filePath))
 
-	splitImages[1].Bounds()
-
-	return nil
-}
-
-func convertRgbaToGray(img image.Image) *image.Gray {
-	var (
-		bounds = img.Bounds()
-		gray   = image.NewGray(bounds)
-	)
-	for x := 0; x < bounds.Max.X; x++ {
-		for y := 0; y < bounds.Max.Y; y++ {
-			var rgba = img.At(x, y)
-			gray.Set(x, y, rgba)
-		}
+	_ = Logger().Info(fmt.Sprintf("Beginning image conversion"))
+	useUnicodeAny, ok := Shared().Get("useUnicode")
+	if !ok || useUnicodeAny == nil {
+		return ConvertedImageArray{}, errors.New("useUnicode is nil")
 	}
-	return gray
+	useUnicode := useUnicodeAny.(bool)
+
+	reverseCharsAny, ok := Shared().Get("useUnicode")
+	if !ok || reverseCharsAny == nil {
+		return ConvertedImageArray{}, errors.New("useUnicode is nil")
+	}
+	reverseChars := reverseCharsAny.(bool)
+
+	var outputChars []rune
+	for i := 0; i < len(splitImages); i++ {
+		m := getMedianColor(splitImages[i])
+		outputChars = append(outputChars, getCharForRGBValue(m, useUnicode, reverseChars))
+	}
+	_ = Logger().Info(fmt.Sprintf("Finished image conversion"))
+
+	return ConvertedImageArray{
+		Cols:       cols,
+		Rows:       rows,
+		Characters: outputChars,
+	}, nil
+
 }
 
 func gridFromTextSize(img image.Image, textSize int, fontAspect float64) (cols, rows int) {
@@ -115,8 +123,9 @@ func gridFromTextSize(img image.Image, textSize int, fontAspect float64) (cols, 
 		charH = 16
 	}
 
-	cols = imgW / charW
-	rows = imgH / charH
+	cols = (imgW + charW - 1) / charW
+	rows = (imgH + charH - 1) / charH
+
 	if cols < 1 {
 		cols = 1
 	}
@@ -127,17 +136,11 @@ func gridFromTextSize(img image.Image, textSize int, fontAspect float64) (cols, 
 	return cols, rows
 }
 
-func downScaleToGrid(img image.Image, cols, rows int) *image.Gray {
-	dst := image.NewGray(image.Rect(0, 0, cols, rows))
-	xdraw.ApproxBiLinear.Scale(dst, dst.Bounds(), img, img.Bounds(), xdraw.Over, nil)
-	return dst
-}
-
 func splitImage(textSize int, fontAspect float64, inputImg image.Image, isDebugEnv bool) ([]image.Image, error) {
 
 	imgBounds := inputImg.Bounds()
 	imgWidth, imgHeight := imgBounds.Dx(), imgBounds.Dy()
-	_ = Logger().Info("imgWidth: " + strconv.Itoa(imgWidth) + " imgHeight: " + strconv.Itoa(imgHeight))
+	_ = Logger().Info(fmt.Sprintf("imgWidth: %d | imgHeight: %d", imgWidth, imgHeight))
 
 	charWidth := textSize
 	charHeight := int(float64(textSize) * fontAspect)
@@ -206,4 +209,103 @@ func saveImageToDebugDir(img image.Image, outputName string, subFolderName strin
 	defer func() { _ = out.Close() }()
 
 	return png.Encode(out, img)
+}
+
+func getMedianColor(img image.Image) color.NRGBA {
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
+	if w <= 0 || h <= 0 {
+		return color.NRGBA{}
+	}
+
+	rs := make([]uint8, 0, w*h)
+	gs := make([]uint8, 0, w*h)
+	bs := make([]uint8, 0, w*h)
+	as := make([]uint8, 0, w*h)
+
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			c := color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)
+			if c.A < 10 {
+				continue
+			}
+			rs = append(rs, c.R)
+			gs = append(gs, c.G)
+			bs = append(bs, c.B)
+			as = append(as, c.A)
+		}
+	}
+
+	return color.NRGBA{
+		R: medianUint8(rs),
+		G: medianUint8(gs),
+		B: medianUint8(bs),
+		A: medianUint8(as),
+	}
+}
+
+func medianUint8(v []uint8) uint8 {
+	if len(v) == 0 {
+		return 0
+	}
+	sort.Slice(v, func(i, j int) bool {
+		return v[i] < v[j]
+	})
+
+	m := len(v) / 2
+	if len(v)%2 == 1 {
+		return v[m]
+	}
+
+	return uint8((uint16(v[m-1]) + uint16(v[m])) / 2)
+}
+
+func getCharForRGBValue(color color.NRGBA, useUnicode bool, reverseChars bool) rune {
+
+	var asciiRamp []rune
+	var unicodeRamp []rune
+
+	if reverseChars {
+		asciiRamp = []rune(asciiRampDarkToBrightStr)
+		unicodeRamp = []rune(unicodeRampDarkToBrightStr)
+	} else {
+		asciiRamp = []rune(asciiRampBrightToDarkStr)
+		unicodeRamp = []rune(unicodeRampBrightToDarkStr)
+	}
+
+	brightness := (0.2126 * float64(color.R)) + (0.7152 * float64(color.G)) + (0.0722 * float64(color.B))
+
+	var brightnessLevel float64
+	var rampLen int
+	var returnChar rune
+
+	if useUnicode {
+		rampLen = len(unicodeRamp)
+		brightnessLevel = 255.0 / float64(rampLen)
+	} else {
+		rampLen = len(asciiRamp)
+		brightnessLevel = 255.0 / float64(rampLen)
+	}
+	_ = Logger().Info(fmt.Sprintf("Ramp length: %d | Brightness Step: %.2f", rampLen, brightnessLevel))
+
+	charIndex := int(brightness / brightnessLevel)
+	if charIndex < 0 {
+		charIndex = 0
+	}
+	if charIndex >= rampLen {
+		charIndex = rampLen - 1
+	}
+	if useUnicode {
+		returnChar = unicodeRamp[charIndex]
+	} else {
+		returnChar = asciiRamp[charIndex]
+	}
+	_ = Logger().Info(
+		fmt.Sprintf(
+			"brightness: %.2f | character: %s | median RGBA: %d %d %d %d | character index: %d",
+			brightness, string(returnChar), color.R, color.G, color.B, color.A, charIndex,
+		),
+	)
+
+	return returnChar
 }
