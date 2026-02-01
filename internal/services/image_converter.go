@@ -22,8 +22,8 @@ const asciiRampBrightToDarkStr = " .`^,:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ
 const unicodeRampBrightToDarkStr = " '`^.\",!;:~-=+*#$%&@□■░▒▓▏▎▍▌▋▊▉█"
 
 /*
-TODO if unicode is true i could make a bunch of different ramps for the user to choose from.
-	Example:
+TODO: If unicode is true, you can offer multiple ramps (style presets) for the user to choose from.
+Examples:
 	█▇▆▅▄▃▂▁ ▁▂▃▄▅▆▇█
 	█▓▒░ ░▒▓█
 	⣿⣷⣧⣇⣆⣄⣀ ⣀⣄⣆⣇⣧⣷⣿
@@ -47,6 +47,8 @@ func ConvertImageToString(filePath string) ([][]rune, error) {
 	}
 	_ = Logger().Info(fmt.Sprintf("format: %s", format))
 
+	// textSize: roughly controls how many pixels map to one character horizontally.
+	// If missing/invalid, fall back to a reasonable default.
 	textSizeAny, ok := Shared().Get("textSize")
 	if !ok || textSizeAny == nil {
 		return outputChars, errors.New("textSize is nil")
@@ -56,6 +58,8 @@ func ConvertImageToString(filePath string) ([][]rune, error) {
 		textSize = 8
 	}
 
+	// fontAspect: terminal characters are typically taller than they are wide,
+	// so vertical cell size is textSize * fontAspect.
 	fontAspectAny, ok := Shared().Get("fontAspect")
 	if !ok || fontAspectAny == nil {
 		return outputChars, errors.New("fontAspect is nil")
@@ -65,57 +69,76 @@ func ConvertImageToString(filePath string) ([][]rune, error) {
 		fontAspect = 2
 	}
 
+	// highContrast: optional contrast curve applied after cell luminance averaging.
+	// Useful for "washed out" images in ASCII output.
 	highContrastAny, ok := Shared().Get("highContrast")
 	if !ok || highContrastAny == nil {
 		return outputChars, errors.New("highContrast is nil")
 	}
 	highContrast := highContrastAny.(bool)
 
-	cols, rows := gridFromTextSize(inputImg, textSize, fontAspect)
+	// Compute grid resolution (cols x rows) based on image size + character cell size.
+	cols, rows := getColsAndRows(inputImg, textSize, fontAspect)
+
 	outputChars = make([][]rune, rows)
 	for r := 0; r < rows; r++ {
 		outputChars[r] = make([]rune, cols)
 	}
 
-	lumaGrid, err := buildLumianceGrid(inputImg, cols, rows, highContrast)
+	// Build a luminance grid (rows x cols) where each cell is 0..1.
+	// Each cell luminance is computed by averaging pixels in the corresponding image region.
+	lumaGrid, err := buildLuminanceGrid(inputImg, cols, rows, highContrast)
 	if err != nil {
 		return outputChars, err
 	}
 	_ = Logger().Info(fmt.Sprintf("Successfully Build LumaGrid for %s", filePath))
 
+	// directionalRender: optional Edge Awareness.
+	// Derive edge magnitude/orientation from lumaGrid and choose glyphs accordingly.
 	directionalRenderAny, ok := Shared().Get("directionalRender")
 	if !ok || directionalRenderAny == nil {
 		return outputChars, errors.New("directionalRender is nil")
 	}
 	directionalRender := directionalRenderAny.(bool)
 	if directionalRender {
-		//TODO apply Sobel filter
+		// TODO: apply Sobel filter on lumaGrid (operate on the *grid*, not original pixels)
+		// Steps (high level):
+		// 1) compute Gx, Gy per cell (skip borders)
+		// 2) magnitude = sqrt(Gx*Gx + Gy*Gy) normalized
+		// 3) orientation = atan2(Gy, Gx)
+		// 4) map orientation + magnitude to a directional glyph set
 	}
 
 	_ = Logger().Info(fmt.Sprintf("Beginning image conversion"))
+
+	// useUnicode: pick between ASCII ramps and Unicode ramps.
 	useUnicodeAny, ok := Shared().Get("useUnicode")
 	if !ok || useUnicodeAny == nil {
 		return outputChars, errors.New("useUnicode is nil")
 	}
 	useUnicode := useUnicodeAny.(bool)
 
+	// reverseChars: invert ramp direction (useful for dark terminals / preference).
 	reverseCharsAny, ok := Shared().Get("reverseChars")
 	if !ok || reverseCharsAny == nil {
 		return outputChars, errors.New("reverseChars is nil")
 	}
 	reverseChars := reverseCharsAny.(bool)
 
+	// Convert each luminance cell to a glyph using the chosen ramp.
+	// lumaGrid indices are [row][col] matching outputChars.
 	for i := 0; i < len(lumaGrid); i++ {
 		for j := 0; j < len(lumaGrid[i]); j++ {
 			outputChars[i][j] = getCharForLuminanceValue(lumaGrid[i][j], useUnicode, reverseChars)
 		}
 	}
-	_ = Logger().Info(fmt.Sprintf("Finished image conversion"))
 
+	_ = Logger().Info(fmt.Sprintf("Finished image conversion"))
 	return outputChars, nil
 }
 
-func gridFromTextSize(img image.Image, textSize int, fontAspect float64) (cols, rows int) {
+//Calculates Columns and Rows for given TextSize and FontAspect
+func getColsAndRows(img image.Image, textSize int, fontAspect float64) (cols, rows int) {
 	b := img.Bounds()
 	imgW, imgH := b.Dx(), b.Dy()
 
@@ -141,13 +164,16 @@ func gridFromTextSize(img image.Image, textSize int, fontAspect float64) (cols, 
 	return cols, rows
 }
 
-func buildLumianceGrid(inputImg image.Image, cols, rows int, highContrast bool) ([][]float64, error) {
+//Builds a grid of averaged luminance values in [0..1].
+func buildLuminanceGrid(inputImg image.Image, cols, rows int, highContrast bool) ([][]float64, error) {
 
 	imgBounds := inputImg.Bounds()
 	imgWidth, imgHeight := imgBounds.Dx(), imgBounds.Dy()
 
 	cellWidth := imgWidth / cols
 	cellHeight := imgHeight / rows
+
+	// Safety fallback if cols/rows are weird (should be prevented earlier).
 	if cellWidth <= 0 {
 		cellWidth = 8
 	}
@@ -155,12 +181,14 @@ func buildLumianceGrid(inputImg image.Image, cols, rows int, highContrast bool) 
 		cellHeight = 16
 	}
 
+	// Allocate luminance grid.
 	grid := make([][]float64, rows)
 	for gridRow := 0; gridRow < rows; gridRow++ {
 		grid[gridRow] = make([]float64, cols)
 	}
 
 	for gridRow := 0; gridRow < rows; gridRow++ {
+		// Pixel Y-range for this grid row.
 		cellRowPixelStartY := gridRow * cellHeight
 		cellRowPixelEndY := cellRowPixelStartY + cellHeight
 		if cellRowPixelStartY >= imgHeight {
@@ -171,6 +199,7 @@ func buildLumianceGrid(inputImg image.Image, cols, rows int, highContrast bool) 
 		}
 
 		for gridCol := 0; gridCol < cols; gridCol++ {
+			// Pixel X-range for this grid column.
 			cellColPixelStartX := gridCol * cellWidth
 			cellColPixelEndX := cellColPixelStartX + cellWidth
 			if cellColPixelStartX >= imgWidth {
@@ -180,7 +209,7 @@ func buildLumianceGrid(inputImg image.Image, cols, rows int, highContrast bool) 
 				cellColPixelEndX = imgWidth
 			}
 
-			//fallback (should not happen)
+			// Fallback guard (should not happen if dimensions are sane).
 			if cellColPixelEndX <= cellColPixelStartX || cellRowPixelEndY <= cellRowPixelStartY {
 				grid[gridRow][gridCol] = 0
 				continue
@@ -189,22 +218,26 @@ func buildLumianceGrid(inputImg image.Image, cols, rows int, highContrast bool) 
 			var lumaSum float64
 			var sampleCount float64
 
-			for cellCol := cellRowPixelStartY; cellCol < cellRowPixelEndY; cellCol++ {
-				for CellRow := cellColPixelStartX; CellRow < cellColPixelEndX; CellRow++ {
+			for y := cellRowPixelStartY; y < cellRowPixelEndY; y++ {
+				for x := cellColPixelStartX; x < cellColPixelEndX; x++ {
 					c := color.NRGBAModel.Convert(
-						inputImg.At(imgBounds.Min.X+CellRow, imgBounds.Min.Y+cellCol),
+						inputImg.At(imgBounds.Min.X+x, imgBounds.Min.Y+y),
 					).(color.NRGBA)
 
+					// Skip mostly transparent pixels to prevent background bleed.
 					if c.A < 10 {
 						continue
 					}
 
-					pixelLuminance := calculateLuminance(c.R, c.G, c.B) // expects 0..1
+					// Luminance is computed as 0..1.
+					pixelLuminance := calculateLuminance(c.R, c.G, c.B)
 					lumaSum += pixelLuminance
 					sampleCount++
 				}
 			}
 
+			// Average luminance;
+			// if all transparent, treat as black.
 			var cellLuma float64
 			if sampleCount == 0 {
 				cellLuma = 0
@@ -212,6 +245,7 @@ func buildLumianceGrid(inputImg image.Image, cols, rows int, highContrast bool) 
 				cellLuma = lumaSum / sampleCount
 			}
 
+			// Optional contrast remap
 			if highContrast {
 				cellLuma = applyContrast(cellLuma, 1.7)
 			}
@@ -223,12 +257,16 @@ func buildLumianceGrid(inputImg image.Image, cols, rows int, highContrast bool) 
 	return grid, nil
 }
 
+/*
+Calculates luminance from rgb values and normalizes them from 0..255 into 0..1
+	Uses standard relative luminance weights (Rec.709 / sRGB), where green contributes the most to perceived brightness
+*/
 func calculateLuminance(red uint8, green uint8, blue uint8) float64 {
 	luminance := 0.2126*float64(red) + 0.7152*float64(green) + 0.0722*float64(blue)
-	//normalize to 0...1
 	return luminance / 255.0
 }
 
+// Get the rune correspondent to luminance in selected ramp
 func getCharForLuminanceValue(luminance float64, useUnicode bool, reverseChars bool) rune {
 	var ramp []rune
 	if useUnicode {
@@ -245,7 +283,7 @@ func getCharForLuminanceValue(luminance float64, useUnicode bool, reverseChars b
 		}
 	}
 
-	luminance = clamp01(luminance)
+	// Map luminance to an index in the ramp:
 	index := int(luminance * float64(len(ramp)-1))
 
 	_ = Logger().Info(
@@ -258,7 +296,9 @@ func getCharForLuminanceValue(luminance float64, useUnicode bool, reverseChars b
 	return ramp[index]
 }
 
+// Clamp to [0..1] to keep mapping stable.
 func clamp01(x float64) float64 {
+
 	if x < 0 {
 		return 0
 	}
@@ -268,6 +308,7 @@ func clamp01(x float64) float64 {
 	return x
 }
 
+// Applies contrast to lumiance levels with contrast curve at 0.5
 func applyContrast(l float64, factor float64) float64 {
 	return clamp01((l-0.5)*factor + 0.5)
 }
