@@ -21,7 +21,8 @@ func main() {
 		}
 	}
 
-	p := tea.NewProgram(app.NewRouterModel(), tea.WithAltScreen())
+	//p := tea.NewProgram(app.NewRouterModel(), tea.WithAltScreen())
+	p := tea.NewProgram(app.NewExperimentalModel(), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		_ = services.Logger().Error("Unexpected Error. Unable to recover")
 		fmt.Printf("An unexpected error has occurred.\n")
