@@ -9,6 +9,9 @@
 converts images (and eventually GIFs/videos) into ASCII or
 Unicode art.
 
+<img width="1868" height="1006" alt="image" src="https://github.com/user-attachments/assets/bb427af1-b4c5-4db8-8b4a-2b8f20afcf8b" />
+
+
 ------------------------------------------------------------------------
 
 ## ✨ Features
